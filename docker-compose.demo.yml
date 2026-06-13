@@ -24,6 +24,10 @@ x-java-demo: &java-demo
   environment: &java-demo-env
     SPRING_PROFILES_ACTIVE: docker
     JAVA_TOOL_OPTIONS: -Xms128m -Xmx384m
+    SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER:-user}
+    SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
+    SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
   deploy:
     resources:
       limits:
