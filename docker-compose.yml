@@ -1,0 +1,275 @@
+x-postgres-defaults: &postgres-defaults
+  image: ${POSTGRES_IMAGE:-postgres:16}
+  restart: unless-stopped
+  networks:
+    - bsps
+  healthcheck:
+    test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d $${POSTGRES_DB}"]
+    interval: 5s
+    timeout: 5s
+    retries: 10
+    start_period: 10s
+
+services:
+  postgres-client:
+    <<: *postgres-defaults
+    container_name: bsps-postgres-client
+    ports:
+      - "${POSTGRES_CLIENT_PORT:-5488}:5432"
+    environment:
+      POSTGRES_DB: client-service
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    volumes:
+      - postgres-client-data:/var/lib/postgresql/data
+    labels:
+      service: postgres-client
+
+  postgres-application:
+    <<: *postgres-defaults
+    container_name: bsps-postgres-application
+    ports:
+      - "${POSTGRES_APPLICATION_PORT:-5489}:5432"
+    environment:
+      POSTGRES_DB: application-service
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    volumes:
+      - postgres-application-data:/var/lib/postgresql/data
+    labels:
+      service: postgres-application
+
+  postgres-report:
+    <<: *postgres-defaults
+    container_name: bsps-postgres-report
+    ports:
+      - "${POSTGRES_REPORT_PORT:-5487}:5432"
+    environment:
+      POSTGRES_DB: report-service
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password}
+    volumes:
+      - postgres-report-data:/var/lib/postgresql/data
+    labels:
+      service: postgres-report
+
+  rabbitmq:
+    image: ${RABBITMQ_IMAGE:-rabbitmq:3-management}
+    container_name: bsps-rabbitmq
+    restart: unless-stopped
+    ports:
+      - "${RABBITMQ_AMQP_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-guest}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks:
+      - bsps
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    labels:
+      service: rabbitmq
+
+  jsreport:
+    image: ${JSREPORT_IMAGE:-jsreport/jsreport}
+    container_name: bsps-jsreport
+    restart: unless-stopped
+    ports:
+      - "${JSREPORT_PORT:-5485}:5488"
+    volumes:
+      - jsreport-data:/jsreport
+    networks:
+      - bsps
+    labels:
+      service: jsreport
+
+  loki:
+    image: ${LOKI_IMAGE:-grafana/loki:3.4.2}
+    container_name: bsps-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    ports:
+      - "${LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./observability/loki/loki-config.yml:/etc/loki/loki-config.yml:ro
+      - loki-data:/loki
+    networks:
+      - bsps
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    labels:
+      service: loki
+
+  promtail:
+    image: ${PROMTAIL_IMAGE:-grafana/promtail:3.4.2}
+    container_name: bsps-promtail
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/promtail-config.yml
+    volumes:
+      - ./observability/promtail/promtail-config.yml:/etc/promtail/promtail-config.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - bsps
+    depends_on:
+      loki:
+        condition: service_healthy
+    labels:
+      service: promtail
+
+  grafana:
+    image: ${GRAFANA_IMAGE:-grafana/grafana:11.5.2}
+    container_name: bsps-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3001}:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/provisioning/dashboards/bsps-logs.json
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    networks:
+      - bsps
+    depends_on:
+      loki:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    labels:
+      service: grafana
+
+  client-service:
+    build:
+      context: ../client-service
+      dockerfile: ../bsps-infra/docker/client-service/Dockerfile
+    image: bsps/client-service:local
+    container_name: bsps-client-service
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "${CLIENT_SERVICE_PORT:-8080}:8080"
+    networks:
+      - bsps
+    depends_on:
+      postgres-client:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8080/v3/api-docs || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
+    labels:
+      service: client-service
+
+  application-service:
+    build:
+      context: ../application-service
+      dockerfile: ../bsps-infra/docker/application-service/Dockerfile
+    image: bsps/application-service:local
+    container_name: bsps-application-service
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "${APPLICATION_SERVICE_PORT:-8082}:8082"
+    networks:
+      - bsps
+    depends_on:
+      postgres-application:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8082/v3/api-docs || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
+    labels:
+      service: application-service
+
+  application-gateway:
+    build:
+      context: ../application-gateway
+      dockerfile: ../bsps-infra/docker/application-gateway/Dockerfile
+    image: bsps/application-gateway:local
+    container_name: bsps-application-gateway
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "${GATEWAY_PORT:-8088}:8088"
+    networks:
+      - bsps
+    depends_on:
+      client-service:
+        condition: service_healthy
+      application-service:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:8088/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 15
+      start_period: 60s
+    labels:
+      service: application-gateway
+
+  application-ui:
+    build:
+      context: ../application-ui
+      dockerfile: ../bsps-infra/docker/application-ui/Dockerfile
+      args:
+        REACT_APP_API_BASE_URL: ${REACT_APP_API_BASE_URL:-http://localhost:8088}
+        REACT_APP_INITIATOR_LOGIN: ${REACT_APP_INITIATOR_LOGIN:-operator}
+    image: bsps/application-ui:local
+    container_name: bsps-application-ui
+    restart: unless-stopped
+    ports:
+      - "${UI_PORT:-3000}:80"
+    networks:
+      - bsps
+    depends_on:
+      application-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:80/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    labels:
+      service: application-ui
+
+networks:
+  bsps:
+    name: bsps-network
+
+volumes:
+  postgres-client-data:
+  postgres-application-data:
+  postgres-report-data:
+  rabbitmq-data:
+  jsreport-data:
+  loki-data:
+  grafana-data:
