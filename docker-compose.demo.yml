@@ -132,6 +132,8 @@ services:
     environment:
       <<: *java-demo-env
       SPRING_PROFILES_ACTIVE: docker,demo
+      SPRING_APPLICATION_JSON: >-
+        {"spring":{"cloud":{"gateway":{"server":{"webflux":{"globalcors":{"add-to-simple-url-handler-mapping":true,"cors-configurations":{"[/**]":{"allowed-origin-patterns":["*"],"allowed-methods":["*"],"allowed-headers":"*","allow-credentials":true}}}}}}}}
     ports:
       - "${GATEWAY_PORT:-8088}:8088"
     depends_on:
