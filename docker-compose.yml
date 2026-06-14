@@ -229,9 +229,6 @@ services:
       SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD:-password}
       SPRING_RABBITMQ_USERNAME: ${RABBITMQ_USER:-guest}
       SPRING_RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:-guest}
-      # CORS для UI с любого host (VPS IP, localhost). Дублирует application-docker.yml.
-      SPRING_APPLICATION_JSON: >-
-        {"spring":{"cloud":{"gateway":{"server":{"webflux":{"globalcors":{"add-to-simple-url-handler-mapping":true,"cors-configurations":{"[/**]":{"allowed-origin-patterns":["*"],"allowed-methods":["*"],"allowed-headers":"*","allow-credentials":true}}}}}}}}
     ports:
       - "${GATEWAY_PORT:-8088}:8088"
     networks:
