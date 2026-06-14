@@ -20,6 +20,7 @@ IdeaProjects/
 ├── application-ui/
 ├── application-gateway/
 ├── application-service/
+├── report-service/
 └── client-service/
 ```
 
@@ -29,6 +30,9 @@ IdeaProjects/
 
 ```powershell
 cd ..\client-service
+git submodule update --init --recursive
+
+cd ..\report-service
 git submodule update --init --recursive
 
 cd ..\application-service
@@ -51,46 +55,7 @@ docker compose ps
 
 Ожидаемый результат — 8 контейнеров в статусе `running`, у Postgres/RabbitMQ/Loki/Grafana — `(healthy)`.
 
-### Что происходит под капотом
-
-1. Docker скачивает образы (`postgres:16`, `rabbitmq:3-management` и др.)
-2. Создаётся сеть `bsps-network` — контейнеры видят друг друга по имени
-3. Порты пробрасываются на хост: Postgres доступен как `localhost:5488`, а не `5432`
-4. Promtail читает логи контейнеров и отправляет в Loki
-5. Grafana подключается к Loki автоматически (provisioning)
-
-## 4. Запуск приложений на хосте
-
-Откройте **4 терминала**:
-
-**Терминал 1 — client-service:**
-```powershell
-cd ..\client-service
-.\mvnw.cmd spring-boot:run
-```
-
-**Терминал 2 — application-service:**
-```powershell
-cd ..\application-service
-.\mvnw.cmd spring-boot:run
-```
-
-**Терминал 3 — application-gateway:**
-```powershell
-cd ..\application-gateway
-.\mvnw.cmd spring-boot:run
-```
-
-**Терминал 4 — application-ui:**
-```powershell
-cd ..\application-ui
-npm install
-npm start
-```
-
-> Приложения подключаются к `localhost:5488`, `localhost:5489`, `localhost:5672` — это порты, проброшенные из Docker на ваш компьютер.
-
-## 5. Проверка работоспособности
+## 4. Проверка работоспособности
 
 | Что | URL / команда |
 |-----|---------------|
@@ -109,7 +74,7 @@ curl http://localhost:8088/api/smoke
 
 Ожидается JSON со статусом `UP`.
 
-## 6. Просмотр логов в Grafana
+## 5. Просмотр логов в Grafana
 
 ### Дашборд с селектором сервисов (рекомендуется)
 
@@ -139,22 +104,18 @@ curl http://localhost:8088/api/smoke
 {container=~"bsps-.*"}
 ```
 
-> В фазе 1 в Grafana видны логи **инфра-контейнеров**. Логи Spring-приложений, запущенных на хосте через Maven, сюда не попадают — они выводятся в терминал IDE. В фазе 2 (все в Docker) логи микросервисов тоже появятся в Grafana.
-
-## 7. Остановка
+## 6. Остановка
 
 ```powershell
 cd bsps-infra
 docker compose down
 ```
 
-Удалить данные БД (осторожно — сотрёт все данные):
-
 ```powershell
 docker compose down -v
 ```
 
-## 8. Troubleshooting
+## 7. Troubleshooting
 
 ### Порт занят
 
@@ -181,12 +142,6 @@ git submodule update --init --recursive
 ```
 
 Директория `src/contracts` должна содержать Java-файлы.
-
-### UI: CORS error
-
-UI обращается к gateway напрямую (`REACT_APP_API_BASE_URL=http://localhost:8088` или `http://ВАШ_IP:8088`). В Docker-профиле gateway разрешает любой origin через `GatewayCorsConfig`.
-
-После изменений в `application-gateway`:
 
 ```bash
 cd /opt/bsps/application-gateway && git pull
@@ -222,7 +177,7 @@ Docker Desktop должен быть запущен. Promtail монтирует
 
 Первый старт может занять до минуты. Проверьте: `docker compose logs jsreport`
 
-## 9. Полезные команды
+## 8. Полезные команды
 
 ```powershell
 # Логи конкретного сервиса
@@ -233,26 +188,6 @@ docker compose restart postgres-client
 
 # Статус healthcheck
 docker inspect --format='{{.State.Health.Status}}' bsps-postgres-client
-```
-
-## 10. Полный стек в Docker (Фаза 2)
-
-Все сервисы (UI, gateway, backend) запускаются в контейнерах. Spring-профиль `docker` подставляет hostname'ы Docker-сети.
-
-### Сборка и запуск
-
-```powershell
-cd bsps-infra
-.\scripts\build-all.ps1
-```
-
-Первая сборка занимает 10–20 минут (Maven + npm). Повторные сборки быстрее за счёт кэша Docker.
-
-Пересборка одного сервиса:
-
-```powershell
-docker compose up --build -d client-service
-docker compose up --build -d application-gateway
 ```
 
 ### Проверка полного стека
@@ -271,10 +206,4 @@ docker compose up --build -d application-gateway
 {service="client-service"} |= "ERROR"
 {service="application-gateway"}
 ```
-
-### Переключение между фазой 1 и 2
-
-- **Фаза 1:** поднять только инфра, приложения на хосте — `docker compose up -d postgres-client postgres-application postgres-report rabbitmq loki grafana promtail jsreport`
-- **Фаза 2:** полный стек — `docker compose up --build -d`
-
 > Не запускайте одновременно приложения на хосте и в Docker на тех же портах (8080, 8082, 8088, 3000).
